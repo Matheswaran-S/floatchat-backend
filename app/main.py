@@ -20,9 +20,14 @@ def root():
 
 # Example API endpoint (for testing)
 @app.get("/temperature")
-def get_temperature(depth: int = 100):
-    # Mock response for now
-    return {"depth": depth, "temperature": "25°C"}
+def get_temperature(depth: int):
+    # For now, return a fake temperature based on depth
+    temp = 25 - (depth / 1000)  # just a simple formula
+    return {
+        "location": "Arabian Sea",
+        "depth": f"{depth}m",
+        "temperature": f"{temp:.1f}°C"
+    }
 @app.get("/salinity")
 def get_salinity(depth: int):
     # Fake salinity based on depth
