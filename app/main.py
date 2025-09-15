@@ -23,3 +23,11 @@ def root():
 def get_temperature(depth: int = 100):
     # Mock response for now
     return {"depth": depth, "temperature": "25°C"}
+@app.get("/salinity")
+def get_salinity(depth: int):
+    # Fake salinity based on depth
+    salinity = 35 + (depth / 2000)  # deeper → slightly more saline
+    return {
+        "location": "Arabian Sea",
+        "depth": f"{depth}m",
+        "salinity": f"{salinity:.2f} PSU"}
