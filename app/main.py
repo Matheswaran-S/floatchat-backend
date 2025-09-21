@@ -12,17 +12,18 @@ FILE_PATH = os.path.join(os.path.dirname(__file__), "argo_dummy.xlsx")
 try:
     df = pd.read_excel(FILE_PATH)
 
-    # Map Excel column names to API expected columns
+    # Map Excel columns to API expected columns
     column_mapping = {
         "latitude": "lat",
         "longitude": "long",
         "datetime": "time",
-        "temperature": "temperature",  # fix typo in Excel
+        "temperatu": "temperature",  # fix typo in Excel
         "salinity": "salinity",
         "pressure": "pressure"
     }
 
-    df = df.rename(columns=column_mapping)
+    # Only rename columns that exist in the Excel file
+    df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
 
 except Exception as e:
     print(f"Error loading file: {e}")
@@ -42,7 +43,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # -------------------------
 # Root endpoint
 # -------------------------
@@ -50,30 +50,37 @@ app.add_middleware(
 def root():
     return {"message": "Hello from backend deployed on Render!"}
 
-
 # -------------------------
-# Return all available depths
+# Return all available depths (graceful)
 # -------------------------
 @app.get("/depths")
 def get_depths():
-    if df.empty or "depth" not in df.columns:
-        raise HTTPException(status_code=500, detail="Depth data not available")
-    return {"depths": df["depth"].tolist()}
-
+    if df.empty:
+        return {"depths": [], "note": "Data is empty"}
+    if "depth" in df.columns:
+        return {"depths": df["depth"].tolist()}
+    else:
+        # Depth column missing, return random sample of 5 depth-like values
+        sample_depths = [random.uniform(0, 1000) for _ in range(5)]
+        return {"depths": sample_depths, "note": "Depth column missing, random values returned"}
 
 # -------------------------
-# Generic function to get values by depth
+# Generic function to get values by depth (graceful)
 # -------------------------
 def get_value_by_depth(column: str, depth: float):
-    if df.empty or column not in df.columns or "depth" not in df.columns:
-        raise HTTPException(status_code=500, detail=f"{column} or depth data not available")
+    if df.empty or column not in df.columns:
+        raise HTTPException(status_code=500, detail=f"{column} data not available")
+
+    if "depth" not in df.columns:
+        # Depth column missing, return random value
+        random_row = df.sample(1).iloc[0]
+        return random_row[column], True
 
     row = df[df["depth"] == depth]
     if row.empty:
         random_row = df.sample(1).iloc[0]
         return random_row[column], True
     return row[column].values[0], False
-
 
 # -------------------------
 # Temperature by depth
@@ -83,9 +90,8 @@ def get_temperature(depth: float):
     value, is_random = get_value_by_depth("temperature", depth)
     response = {"depth": depth, "temperature": value}
     if is_random:
-        response["note"] = "Random data returned, depth not found"
+        response["note"] = "Random data returned, depth not found or depth column missing"
     return response
-
 
 # -------------------------
 # Salinity by depth
@@ -95,9 +101,8 @@ def get_salinity(depth: float):
     value, is_random = get_value_by_depth("salinity", depth)
     response = {"depth": depth, "salinity": value}
     if is_random:
-        response["note"] = "Random data returned, depth not found"
+        response["note"] = "Random data returned, depth not found or depth column missing"
     return response
-
 
 # -------------------------
 # Pressure by depth
@@ -107,19 +112,22 @@ def get_pressure(depth: float):
     value, is_random = get_value_by_depth("pressure", depth)
     response = {"depth": depth, "pressure": value}
     if is_random:
-        response["note"] = "Random data returned, depth not found"
+        response["note"] = "Random data returned, depth not found or depth column missing"
     return response
-
 
 # -------------------------
 # Argo data by lat, long, time
 # -------------------------
 @app.get("/argo-data")
 def get_argo_data(
-        lat: float = Query(..., description="Latitude"),
-        long: float = Query(..., description="Longitude"),
-        time: str = Query(..., description="Time in YYYY-MM-DD format")
+    lat: float = Query(None, alias="latitude", description="Latitude"),
+    long: float = Query(None, alias="longitude", description="Longitude"),
+    time: str = Query(..., description="Time in YYYY-MM-DD format")
 ):
+    # Ensure lat and long are provided
+    if lat is None or long is None:
+        raise HTTPException(status_code=422, detail="lat and long are required query parameters")
+
     required_columns = ["lat", "long", "time", "temperature", "salinity", "pressure"]
     if df.empty or not all(col in df.columns for col in required_columns):
         raise HTTPException(status_code=500, detail="Required data columns not available")
@@ -129,7 +137,7 @@ def get_argo_data(
         (df["lat"] == lat) &
         (df["long"] == long) &
         (df["time"] == time)
-        ]
+    ]
 
     if row.empty:
         random_row = df.sample(1).iloc[0]
@@ -144,6 +152,7 @@ def get_argo_data(
         }
 
     return row.to_dict(orient="records")[0]
+
 
 
 
