@@ -12,18 +12,26 @@ FILE_PATH = os.path.join(os.path.dirname(__file__), "argo_dummy.xlsx")
 try:
     df = pd.read_excel(FILE_PATH)
 
-    # Map Excel columns to API expected columns
+    # Strip spaces and lowercase column names
+    df.columns = df.columns.str.strip().str.lower()
+
+    # Map Excel columns to standard names
     column_mapping = {
         "latitude": "lat",
         "longitude": "long",
-        "datetime": "time",
-        "temperatu": "temperature",
+        "timestamp": "time",
+        "temperature": "temperature",  # fix Excel typo
         "salinity": "salinity",
-        "pressure": "pressure"
+        "pressure": "pressure",
+        "depth": "depth"  # optional
     }
 
-    # Only rename columns that exist in the Excel
+    # Rename columns that exist in Excel
     df = df.rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+
+    # Ensure time column is string for comparison
+    if "time" in df.columns:
+        df["time"] = df["time"].astype(str)
 
 except Exception as e:
     print(f"Error loading file: {e}")
@@ -51,7 +59,7 @@ def root():
     return {"message": "Hello from backend deployed on Render!"}
 
 # -------------------------
-# Depth endpoints (robust)
+# Depth endpoints (optional)
 # -------------------------
 @app.get("/depths")
 def get_depths():
@@ -65,14 +73,14 @@ def get_depths():
 
 def get_value_by_depth(column: str, depth: float):
     if df.empty or column not in df.columns:
-        raise HTTPException(status_code=500, detail=f"{column} data not available")
+        return None, True
     if "depth" not in df.columns:
         random_row = df.sample(1).iloc[0]
-        return random_row[column], True
+        return random_row.get(column), True
     row = df[df["depth"] == depth]
     if row.empty:
         random_row = df.sample(1).iloc[0]
-        return random_row[column], True
+        return random_row.get(column), True
     return row[column].values[0], False
 
 @app.get("/temperature")
@@ -100,32 +108,30 @@ def get_pressure(depth: float):
     return response
 
 # -------------------------
-# Combined endpoint: temperature, salinity, pressure
+# Combined endpoint: lat, long, time, optional depth
 # -------------------------
 @app.get("/argo-full")
 def get_argo_full(
     lat: float = Query(..., description="Latitude"),
     long: float = Query(..., description="Longitude"),
-    time: str = Query(..., description="Time in YYYY-MM-DD format"),
+    time: str = Query(..., description="Time as string"),
     depth: float = Query(None, description="Optional depth")
 ):
-    # Required columns check
-    required_columns = ["lat", "long", "time", "temperature", "salinity", "pressure"]
-    if df.empty or not all(col in df.columns for col in required_columns):
-        raise HTTPException(status_code=500, detail="Required data columns not available")
+    if df.empty:
+        raise HTTPException(status_code=500, detail="Data is empty")
 
     # Filter by lat, long, time
     row = df[
-        (df["lat"] == lat) &
-        (df["long"] == long) &
-        (df["time"] == time)
+        (df.get("lat") == lat) &
+        (df.get("long") == long) &
+        (df.get("time") == time)
     ]
 
-    # If depth provided, further filter
+    # Optional depth filter
     if depth is not None and "depth" in df.columns:
         row = row[row["depth"] == depth]
 
-    # If no exact match, return random row
+    # If no match, pick random row
     if row.empty:
         random_row = df.sample(1).iloc[0]
         return {
@@ -133,23 +139,24 @@ def get_argo_full(
             "long": long,
             "time": time,
             "depth": depth if depth is not None else random_row.get("depth"),
-            "temperature": random_row["temperature"],
-            "salinity": random_row["salinity"],
-            "pressure": random_row["pressure"],
+            "temperature": random_row.get("temperature"),
+            "salinity": random_row.get("salinity"),
+            "pressure": random_row.get("pressure"),
             "note": "Random data returned, exact match not found"
         }
 
-    # Return first matched row
+    # Return matched row
     result = row.iloc[0]
     return {
-        "lat": result["lat"],
-        "long": result["long"],
-        "time": result["time"],
+        "lat": result.get("lat"),
+        "long": result.get("long"),
+        "time": result.get("time"),
         "depth": result.get("depth"),
-        "temperature": result["temperature"],
-        "salinity": result["salinity"],
-        "pressure": result["pressure"]
+        "temperature": result.get("temperature"),
+        "salinity": result.get("salinity"),
+        "pressure": result.get("pressure")
     }
+
 
 
 
