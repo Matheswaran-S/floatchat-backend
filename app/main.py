@@ -1,17 +1,18 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import os
+import random
 
 # Robust path: always relative to main.py
 FILE_PATH = os.path.join(os.path.dirname(__file__), "argo_dummy.xlsx")
 
 # Load the Excel file
 try:
-    df = pd.read_excel(FILE_PATH)  # read Excel
+    df = pd.read_excel(FILE_PATH)
 except Exception as e:
     print(f"Error loading file: {e}")
-    df = pd.DataFrame()  # fallback to empty DataFrame
+    df = pd.DataFrame()
 
 # Create FastAPI app
 app = FastAPI()
@@ -19,7 +20,7 @@ app = FastAPI()
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or restrict to your frontend domain
+    allow_origins=["*"],  # allow all domains
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -37,25 +38,72 @@ def get_depths():
         raise HTTPException(status_code=500, detail="Depth data not available")
     return {"depths": df["depth"].tolist()}
 
-# Get temperature by depth
+# Generic function to get values by depth
+def get_value_by_depth(column: str, depth: float):
+    if df.empty or column not in df.columns or "depth" not in df.columns:
+        raise HTTPException(status_code=500, detail=f"{column} or depth data not available")
+    row = df[df["depth"] == depth]
+    if row.empty:
+        random_row = df.sample(1).iloc[0]
+        return random_row[column], True
+    return row[column].values[0], False
+
+# Temperature by depth
 @app.get("/temperature")
 def get_temperature(depth: float):
-    if df.empty or "temperature" not in df.columns or "depth" not in df.columns:
-        raise HTTPException(status_code=500, detail="Temperature or depth data not available")
-    row = df[df["depth"] == depth]
-    if row.empty:
-        raise HTTPException(status_code=404, detail="Depth not found")
-    temp = row["temperature"].values[0]
-    return {"depth": depth, "temperature": temp}
+    value, is_random = get_value_by_depth("temperature", depth)
+    response = {"depth": depth, "temperature": value}
+    if is_random:
+        response["note"] = "Random data returned, depth not found"
+    return response
 
-# Get salinity by depth
+# Salinity by depth
 @app.get("/salinity")
 def get_salinity(depth: float):
-    if df.empty or "salinity" not in df.columns or "depth" not in df.columns:
-        raise HTTPException(status_code=500, detail="Salinity or depth data not available")
-    row = df[df["depth"] == depth]
+    value, is_random = get_value_by_depth("salinity", depth)
+    response = {"depth": depth, "salinity": value}
+    if is_random:
+        response["note"] = "Random data returned, depth not found"
+    return response
+
+# Pressure by depth
+@app.get("/pressure")
+def get_pressure(depth: float):
+    value, is_random = get_value_by_depth("pressure", depth)
+    response = {"depth": depth, "pressure": value}
+    if is_random:
+        response["note"] = "Random data returned, depth not found"
+    return response
+
+# New endpoint: Argo data by lat, long, time
+@app.get("/argo-data")
+def get_argo_data(
+    lat: float = Query(..., description="Latitude"),
+    long: float = Query(..., description="Longitude"),
+    time: str = Query(..., description="Time in YYYY-MM-DD format")
+):
+    if df.empty or not all(col in df.columns for col in ["lat", "long", "time", "temperature", "salinity", "pressure"]):
+        raise HTTPException(status_code=500, detail="Required data columns not available")
+
+    # Filter by lat, long, time
+    row = df[
+        (df["lat"] == lat) &
+        (df["long"] == long) &
+        (df["time"] == time)
+    ]
+
     if row.empty:
-        raise HTTPException(status_code=404, detail="Depth not found")
-    salinity = row["salinity"].values[0]
-    return {"depth": depth, "salinity": salinity}
+        random_row = df.sample(1).iloc[0]
+        return {
+            "lat": lat,
+            "long": long,
+            "time": time,
+            "temperature": random_row["temperature"],
+            "salinity": random_row["salinity"],
+            "pressure": random_row["pressure"],
+            "note": "Random data returned, coordinates/time not found"
+        }
+    return row.to_dict(orient="records")[0]
+
+
 
