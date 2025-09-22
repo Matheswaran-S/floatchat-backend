@@ -75,12 +75,13 @@ def process_question(q: str):
     return {
         "question": q,
         "parameter": parameter,
-        "latitude": nearest["latitude"],
-        "longitude": nearest["longitude"],
-        "depth": nearest["depth"],
-        "value": nearest[parameter],
+        "latitude": float(nearest["latitude"]),
+        "longitude": float(nearest["longitude"]),
+        "depth": float(nearest["depth"]),
+        "value": float(nearest[parameter]),
         "timestamp": str(nearest["timestamp"])
     }
+
 
 @app.post("/ask")
 def ask_post(req: QueryRequest):
