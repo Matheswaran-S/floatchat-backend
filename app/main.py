@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Enable CORS (for frontend React/JS calls)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -14,15 +13,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load data from Excel
+# Load dataset (Excel)
 df = pd.read_excel("app/argo_dummy.xlsx")
 
 @app.get("/")
 def read_root():
     return {"message": "Welcome to FloatChat Backend with Excel data!"}
 
-
-# Structured API endpoint
 @app.get("/get_data")
 def get_data(
     lat: float = Query(..., description="Latitude"),
@@ -32,11 +29,9 @@ def get_data(
 ):
     if parameter not in df.columns:
         return {"error": f"Invalid parameter. Choose from: {list(df.columns)}"}
-
     nearest = df.iloc[((df["latitude"] - lat).abs() +
                        (df["longitude"] - lon).abs() +
                        (df["depth"] - depth).abs()).argmin()]
-
     return {
         "latitude": nearest["latitude"],
         "longitude": nearest["longitude"],
@@ -46,48 +41,39 @@ def get_data(
         "timestamp": str(nearest["timestamp"])
     }
 
-
-# Natural language model
 class QueryRequest(BaseModel):
     question: str
 
-
-def handle_question(question: str):
-    q = question.lower()
-
-    parameter = "temperature"
-    depth = 0
-    lat, lon = 0, 0
-
-    # Parameter detection
+def process_question(q: str):
+    q = q.lower()
+    parameter, depth, lat, lon = "temperature", 0, None, None
     if "salinity" in q:
         parameter = "salinity"
     elif "pressure" in q:
         parameter = "pressure"
     elif "temperature" in q:
         parameter = "temperature"
-
-    # Ocean detection
     if "pacific" in q:
         lat, lon = 0, -160
     elif "indian" in q:
         lat, lon = -20, 80
     elif "atlantic" in q:
         lat, lon = 0, -30
-
-    # Depth detection
     if "100m" in q or "100 m" in q:
         depth = 100
     elif "500m" in q or "500 m" in q:
         depth = 500
 
-    # Find nearest record
+    if lat is None or lon is None:
+        return {
+            "question": q,
+            "answer": "Sorry, I could not determine the ocean region from your query. Try mentioning Pacific, Indian, or Atlantic."
+        }
     nearest = df.iloc[((df["latitude"] - lat).abs() +
                        (df["longitude"] - lon).abs() +
                        (df["depth"] - depth).abs()).argmin()]
-
     return {
-        "question": question,
+        "question": q,
         "parameter": parameter,
         "latitude": nearest["latitude"],
         "longitude": nearest["longitude"],
@@ -96,23 +82,26 @@ def handle_question(question: str):
         "timestamp": str(nearest["timestamp"])
     }
 
-
-# POST endpoint
 @app.post("/ask")
-def ask_query(req: QueryRequest):
-    return handle_question(req.question)
+def ask_post(req: QueryRequest):
+    return process_question(req.question)
 
-
-# GET endpoint (browser/React-friendly)
 @app.get("/ask")
 def ask_get(query: str = Query(..., description="Natural language query")):
-    return handle_question(query)
+    return process_question(query)
+
+@app.get("/query")
+def query_get(text: str = Query(..., description="Natural language query")):
+    return process_question(text)
+
+# UNIVERSAL CATCH-ALL: any /something-else calls this
+@app.get("/{text:path}")
+def catch_all_get(text: str):
+    # Drop leading / if present, decode %20 to space
+    question = text.replace("%20", " ")
+    return process_question(question)
 
 
-# Path-style endpoint
-@app.get("/q/{text:path}")
-def ask_path(text: str):
-    return handle_question(text)
 
 
 
