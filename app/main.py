@@ -1,3 +1,4 @@
+import re
 import pandas as pd
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -5,6 +6,7 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
+# Allow frontend (React, etc.)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -29,15 +31,17 @@ def get_data(
 ):
     if parameter not in df.columns:
         return {"error": f"Invalid parameter. Choose from: {list(df.columns)}"}
+
     nearest = df.iloc[((df["latitude"] - lat).abs() +
                        (df["longitude"] - lon).abs() +
                        (df["depth"] - depth).abs()).argmin()]
+
     return {
-        "latitude": nearest["latitude"],
-        "longitude": nearest["longitude"],
-        "depth": nearest["depth"],
+        "latitude": float(nearest["latitude"]),
+        "longitude": float(nearest["longitude"]),
+        "depth": float(nearest["depth"]),
         "parameter": parameter,
-        "value": nearest[parameter],
+        "value": float(nearest[parameter]),
         "timestamp": str(nearest["timestamp"])
     }
 
@@ -47,31 +51,61 @@ class QueryRequest(BaseModel):
 def process_question(q: str):
     q = q.lower()
     parameter, depth, lat, lon = "temperature", 0, None, None
+
+    # Parameter detection
     if "salinity" in q:
         parameter = "salinity"
     elif "pressure" in q:
         parameter = "pressure"
     elif "temperature" in q:
         parameter = "temperature"
-    if "pacific" in q:
-        lat, lon = 0, -160
-    elif "indian" in q:
-        lat, lon = -20, 80
-    elif "atlantic" in q:
-        lat, lon = 0, -30
-    if "100m" in q or "100 m" in q:
-        depth = 100
-    elif "500m" in q or "500 m" in q:
-        depth = 500
 
+    # Depth extraction: match any number followed by "m"
+    match = re.search(r'(\d+)\s*m', q)
+    if match:
+        depth = float(match.group(1))
+    else:
+        depth = 0  # Default if no depth is found
+
+    # Extended region keywords with approximate lat/lon
+    region_coords = {
+        "south india beach": (8.5, 77.0),
+        "bay of bengal": (15.0, 90.0),
+        "middle of bay of bengal": (15.0, 90.0),
+        "chennai beach": (13.0, 80.3),
+        "goa beach": (15.4, 73.8),
+        "arabian sea": (15.0, 65.0),
+        "maldives": (3.2, 73.2),
+        # add more regions as needed
+    }
+
+    # Check for matching region keywords in query
+    for region, (r_lat, r_lon) in region_coords.items():
+        if region in q:
+            lat, lon = r_lat, r_lon
+            break
+
+    # Fallback to ocean-level rough locations if no region matched
+    if lat is None or lon is None:
+        if "pacific" in q:
+            lat, lon = 0, -160
+        elif "indian" in q:
+            lat, lon = -20, 80
+        elif "atlantic" in q:
+            lat, lon = 0, -30
+
+    # If still no coordinates found, reply with an error message
     if lat is None or lon is None:
         return {
             "question": q,
-            "answer": "Sorry, I could not determine the ocean region from your query. Try mentioning Pacific, Indian, or Atlantic."
+            "answer": "Sorry, I could not determine the ocean or region from your query. Try mentioning a known ocean or coastal region."
         }
+
+    # Find the nearest datapoint in dataframe with respect to lat, lon, depth
     nearest = df.iloc[((df["latitude"] - lat).abs() +
                        (df["longitude"] - lon).abs() +
                        (df["depth"] - depth).abs()).argmin()]
+
     return {
         "question": q,
         "parameter": parameter,
@@ -81,7 +115,6 @@ def process_question(q: str):
         "value": float(nearest[parameter]),
         "timestamp": str(nearest["timestamp"])
     }
-
 
 @app.post("/ask")
 def ask_post(req: QueryRequest):
@@ -95,10 +128,9 @@ def ask_get(query: str = Query(..., description="Natural language query")):
 def query_get(text: str = Query(..., description="Natural language query")):
     return process_question(text)
 
-# UNIVERSAL CATCH-ALL: any /something-else calls this
+# Universal catch-all to support freeform query urls without 404
 @app.get("/{text:path}")
 def catch_all_get(text: str):
-    # Drop leading / if present, decode %20 to space
     question = text.replace("%20", " ")
     return process_question(question)
 
