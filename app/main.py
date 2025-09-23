@@ -32,7 +32,6 @@ class QueryRequest(BaseModel):
     question: str
 
 def find_location_fuzzy(query: str, threshold=75):
-    # Using partial ratio scorer for fuzzy matching
     best_match = process.extractOne(query, location_names, scorer=fuzz.partial_ratio)
     if best_match and best_match[1] >= threshold:
         matched_name = best_match[0]
@@ -42,16 +41,27 @@ def find_location_fuzzy(query: str, threshold=75):
     return None, None
 
 def process_question(q: str):
-    q_lower = q.lower()
+    q_lower = q.lower().strip()
 
-    # Detect parameter (default temperature)
-    parameter = "temperature"
+    # Return early if question empty or only whitespace
+    if not q_lower:
+        return {
+            "question": "",
+            "answer": "Please provide a location or query to get data about ocean, sea, coast, or beach."
+        }
+
+    # Detect parameters requested (support multiple)
+    parameters = []
+    if "temperature" in q_lower:
+        parameters.append("temperature")
+    if "pressure" in q_lower:
+        parameters.append("pressure")
     if "salinity" in q_lower:
-        parameter = "salinity"
-    elif "pressure" in q_lower:
-        parameter = "pressure"
-    elif "temperature" in q_lower:
-        parameter = "temperature"
+        parameters.append("salinity")
+
+    # Default parameter if none found
+    if not parameters:
+        parameters = ["temperature"]  # default to temperature
 
     # Extract depth (number followed by 'm')
     depth_match = re.search(r'(\d+)\s*m', q_lower)
@@ -59,7 +69,6 @@ def process_question(q: str):
 
     # Parse date/time using dateparser
     dt = dateparser.parse(q_lower, settings={'PREFER_DATES_FROM': 'past'})
-
     if dt is not None:
         display_timestamp = dt
     else:
@@ -78,13 +87,19 @@ def process_question(q: str):
                        (df["longitude"] - lon).abs() +
                        (df["depth"] - depth).abs()).argmin()]
 
+    # Build response values object for all requested parameters
+    values = {}
+    for param in parameters:
+        values[param] = float(nearest[param])
+
     return {
         "question": q,
-        "parameter": parameter,
-        "latitude": float(nearest["latitude"]),
-        "longitude": float(nearest["longitude"]),
-        "depth": float(nearest["depth"]),
-        "value": float(nearest[parameter]),
+        "location": {
+            "latitude": float(nearest["latitude"]),
+            "longitude": float(nearest["longitude"]),
+            "depth": float(nearest["depth"])
+        },
+        "values": values,
         "timestamp": display_timestamp.isoformat()
     }
 
@@ -104,6 +119,7 @@ def query_get(text: str = Query(..., description="Natural language query")):
 def catch_all_get(text: str):
     question = text.replace("%20", " ")
     return process_question(question)
+
 
 
 
